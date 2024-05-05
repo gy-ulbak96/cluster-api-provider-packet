@@ -261,7 +261,7 @@ func (p *Client) GetDeviceByTags(ctx context.Context, project string, tags []str
 func (p *Client) CreateIP(ctx context.Context, _, clusterName, projectID, facility, metro string) (net.IP, error) {
 	failOnApprovalRequired := true
 	req := metal.IPReservationRequestInput{
-		Type:                   "public_ipv4",
+		Type:                   "private_ipv4",
 		Quantity:               1,
 		Facility:               &facility,
 		Metro:                  &metro,
