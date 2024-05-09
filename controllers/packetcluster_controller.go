@@ -36,6 +36,8 @@ import (
 	infrav1 "sigs.k8s.io/cluster-api-provider-packet/api/v1beta1"
 	packet "sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet"
 	"sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet/scope"
+
+	logg "log"
 )
 
 // PacketClusterReconciler reconciles a PacketCluster object.
@@ -134,6 +136,7 @@ func (r *PacketClusterReconciler) reconcileNormal(ctx context.Context, clusterSc
 			log.Error(err, "error reserving an ip")
 			return err
 		}
+		logg.Printf("testtesttesttest-SHOWMETHEIP%v", ip)
 		clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
 			Host: ip.To4().String(),
 			Port: 6443,

@@ -19,8 +19,10 @@ package packet
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -256,37 +258,137 @@ func (p *Client) GetDeviceByTags(ctx context.Context, project string, tags []str
 	return nil, nil
 }
 
-// CreateIP reserves an IP via Packet API. The request fails straight if no IP are available for the specified project.
-// This prevent the cluster to become ready.
+// // CreateIP reserves an IP via Packet API. The request fails straight if no IP are available for the specified project.
+// // This prevent the cluster to become ready.
+// func (p *Client) CreateIP(ctx context.Context, _, clusterName, projectID, facility, metro string) (net.IP, error) {
+// 	failOnApprovalRequired := true
+// 	req := metal.IPReservationRequestInput{
+// 		Type:                   "public_ipv4",
+// 		Quantity:               1,
+// 		Facility:               &facility,
+// 		Metro:                  &metro,
+// 		FailOnApprovalRequired: &failOnApprovalRequired,
+// 		Tags:                   []string{generateElasticIPIdentifier(clusterName)},
+// 	}
+
+// 	apiRequest := p.IPAddressesApi.RequestIPReservation(ctx, projectID)
+// 	r, resp, err := apiRequest.RequestIPReservationRequest(metal.RequestIPReservationRequest{
+// 		IPReservationRequestInput: &req,
+// 	}).Execute() //nolint:bodyclose // see https://github.com/timakin/bodyclose/issues/42
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	if resp.StatusCode == http.StatusUnprocessableEntity {
+// 		return nil, ErrElasticIPQuotaExceeded
+// 	}
+
+// 	rawIP := r.IPReservation.GetAddress()
+// 	ip := net.ParseIP(rawIP)
+// 	if ip == nil {
+// 		return nil, fmt.Errorf("failed to parse IP: %s, %w", rawIP, ErrInvalidIP)
+// 	}
+// 	return ip, nil
+// }
+
+// testtesttest
+func Int32(v int32) *int32 {
+	return &v
+}
+
+type MetalGatewayResponse struct {
+	ID        string `json:"id"`
+	State     string `json:"state"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	Project   struct {
+		Href string `json:"href"`
+	} `json:"project"`
+	VirtualNetwork struct {
+		Href string `json:"href"`
+	} `json:"virtual_network"`
+	IPReservation struct {
+		Href string `json:"href"`
+	} `json:"ip_reservation"`
+	CreatedBy struct {
+		Href string `json:"href"`
+	} `json:"created_by"`
+	Href string `json:"href"`
+}
+
 func (p *Client) CreateIP(ctx context.Context, _, clusterName, projectID, facility, metro string) (net.IP, error) {
-	failOnApprovalRequired := true
-	req := metal.IPReservationRequestInput{
-		Type:                   "private_ipv4",
-		Quantity:               1,
-		Facility:               &facility,
-		Metro:                  &metro,
-		FailOnApprovalRequired: &failOnApprovalRequired,
-		Tags:                   []string{generateElasticIPIdentifier(clusterName)},
+	// equinixUrl := "https://api.equinix.com"
+
+	req := metal.MetalGatewayCreateInput{
+		PrivateIpv4SubnetSize: Int32(32),
+		VirtualNetworkId:      "3a312b31-7195-4fc8-bebd-a569b0e97ea0",
 	}
 
-	apiRequest := p.IPAddressesApi.RequestIPReservation(ctx, projectID)
-	r, resp, err := apiRequest.RequestIPReservationRequest(metal.RequestIPReservationRequest{
-		IPReservationRequestInput: &req,
+	apiRequest := p.MetalGatewaysApi.CreateMetalGateway(ctx, projectID)
+	r, resp, err := apiRequest.CreateMetalGatewayRequest(metal.CreateMetalGatewayRequest{
+		MetalGatewayCreateInput: &req,
 	}).Execute() //nolint:bodyclose // see https://github.com/timakin/bodyclose/issues/42
 	if err != nil {
-		return nil, err
+		if resp.StatusCode == 201 {
+			fmt.Println("Received 201 status code")
+			fmt.Printf("the result %v", r)
+		} else {
+			return nil, fmt.Errorf("unexpected status code: %v, %d", err, resp.StatusCode)
+		}
 	}
+	fmt.Println("flag1")
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		return nil, ErrElasticIPQuotaExceeded
 	}
+	fmt.Printf("flag2 %T\n", r)
 
-	rawIP := r.IPReservation.GetAddress()
+	// eipId := r.MetalGateway.IpReservation.Id
+	var response MetalGatewayResponse
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Error reading body: %v\n", err)
+		return nil, err
+	}
+
+	err = json.Unmarshal([]byte(bodyBytes), &response)
+	if err != nil {
+		fmt.Printf("Error unmarshaling response: %v\n", err)
+		return nil, err
+	}
+	hrefId := response.IPReservation.Href
+	prefix := "/metal/v1/ips/"
+
+	eipId := strings.TrimPrefix(hrefId, prefix)
+
+	fmt.Printf("flag3 %v\n", eipId)
+	// fullUrl := equinixUrl + *href
+	// resp, err := getrke2ClusterInfo(fullUrl, clusterToken)
+	eipReq := metal.IPAssignmentUpdateInput{
+		Tags: []string{generateElasticIPIdentifier(clusterName)},
+	}
+	fmt.Println("flag4")
+	eipRequest := p.IPAddressesApi.UpdateIPAddress(ctx, eipId)
+	fmt.Println("flag5")
+	eipr, eipresp, err := eipRequest.IPAssignmentUpdateInput(eipReq).Execute() //nolint:bodyclose // see https://github.com/timakin/bodyclose/issues/42
+	if err != nil {
+		return nil, fmt.Errorf("SECOND unexpected status code: %v, %d", err, resp.StatusCode)
+	}
+	fmt.Println("flag6")
+
+	if eipresp.StatusCode == http.StatusUnprocessableEntity {
+		return nil, ErrElasticIPQuotaExceeded
+	}
+
+	rawIP := eipr.IPReservation.GetAddress()
 	ip := net.ParseIP(rawIP)
+	fmt.Printf("flag7 %v\n", ip)
 	if ip == nil {
 		return nil, fmt.Errorf("failed to parse IP: %s, %w", rawIP, ErrInvalidIP)
 	}
 	return ip, nil
 }
+
+//testtesttest
 
 // EnableProjectBGP enables bgp on the project.
 func (p *Client) EnableProjectBGP(ctx context.Context, projectID string) error {
