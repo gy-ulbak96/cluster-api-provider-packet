@@ -19,7 +19,6 @@ package controllers
 
 import (
 	"context"
-	"errors"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -114,40 +113,49 @@ func (r *PacketClusterReconciler) reconcileNormal(ctx context.Context, clusterSc
 
 	packetCluster := clusterScope.PacketCluster
 
-	ipReserv, err := r.PacketClient.GetIPByClusterIdentifier(ctx, clusterScope.Namespace(), clusterScope.Name(), packetCluster.Spec.ProjectID)
-	switch {
-	case errors.Is(err, packet.ErrControlPlanEndpointNotFound):
-		// Parse metro and facility from the cluster spec
-		var metro, facility string
-
-		facility = packetCluster.Spec.Facility
-		metro = packetCluster.Spec.Metro
-
-		// If both specified, metro takes precedence over facility
-		if metro != "" {
-			facility = ""
-		}
-
-		// There is not an ElasticIP with the right tags, at this point we can create one
-		ip, err := r.PacketClient.CreateIP(ctx, clusterScope.Namespace(), clusterScope.Name(), packetCluster.Spec.ProjectID, facility, metro)
-		if err != nil {
-			log.Error(err, "error reserving an ip")
-			return err
-		}
+	//testtesttest
+	// ipReserv가 필요없고, packetClusterStatus의 가장 첫번재 값을 가져와서 spec에 넣어주면 됨.
+	if len(packetCluster.Status.AvailableServerIPs) != 0 {
 		clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
-			Host: ip.To4().String(),
-			Port: 6443,
-		}
-	case err != nil:
-		log.Error(err, "error getting cluster IP")
-		return err
-	default:
-		// If there is an ElasticIP with the right tag just use it again
-		clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
-			Host: ipReserv.GetAddress(),
+			Host: packetCluster.Status.AvailableServerIPs[0],
 			Port: 6443,
 		}
 	}
+	// ipReserv, err := r.PacketClient.GetIPByClusterIdentifier(ctx, clusterScope.Namespace(), clusterScope.Name(), packetCluster.Spec.ProjectID)
+	// switch {
+	// case errors.Is(err, packet.ErrControlPlanEndpointNotFound):
+	// 	// Parse metro and facility from the cluster spec
+	// 	var metro, facility string
+
+	// 	facility = packetCluster.Spec.Facility
+	// 	metro = packetCluster.Spec.Metro
+
+	// 	// If both specified, metro takes precedence over facility
+	// 	if metro != "" {
+	// 		facility = ""
+	// 	}
+
+	// 	// There is not an ElasticIP with the right tags, at this point we can create one
+	// 	ip, err := r.PacketClient.CreateIP(ctx, clusterScope.Namespace(), clusterScope.Name(), packetCluster.Spec.ProjectID, facility, metro)
+	// 	if err != nil {
+	// 		log.Error(err, "error reserving an ip")
+	// 		return err
+	// 	}
+	// 	clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
+	// 		Host: ip.To4().String(),
+	// 		Port: 6443,
+	// 	}
+	// case err != nil:
+	// 	log.Error(err, "error getting cluster IP")
+	// 	return err
+	// default:
+	// 	// If there is an ElasticIP with the right tag just use it again
+	// 	clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
+	// 		Host: ipReserv.GetAddress(),
+	// 		Port: 6443,
+	// 	}
+	// }
+	//testtesttest
 
 	if clusterScope.PacketCluster.Spec.VIPManager == "KUBE_VIP" {
 		if err := r.PacketClient.EnableProjectBGP(ctx, packetCluster.Spec.ProjectID); err != nil {

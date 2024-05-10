@@ -62,6 +62,9 @@ type PacketClusterStatus struct {
 	// Conditions defines current service state of the PacketCluster.
 	// +optional
 	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
+
+	// AvailableServerIPs is a list of the Control Plane IP adds that can be used to register further nodes.
+	AvailableServerIPs []string `json:"availableServerIPs,omitempty"`
 }
 
 // +kubebuilder:subresource:status

@@ -101,8 +101,9 @@ func (p *Client) GetDevice(ctx context.Context, deviceID string) (*metal.Device,
 
 // CreateDeviceRequest is an object representing the API request to create a Device.
 type CreateDeviceRequest struct {
-	ExtraTags            []string
-	MachineScope         *scope.MachineScope
+	ExtraTags    []string
+	MachineScope *scope.MachineScope
+	// No marshaling - No opmitempty
 	ControlPlaneEndpoint string
 }
 
@@ -141,6 +142,7 @@ func (p *Client) NewDevice(ctx context.Context, req CreateDeviceRequest) (*metal
 		// control plane machines should get the API key injected
 		userDataValues["apiKey"] = p.APIClient.GetConfig().DefaultHeader["X-Auth-Token"]
 
+		//testtesttest : req.ControlPlaneEndpoint를 빈 채로 보내도 괜찮음.
 		if req.ControlPlaneEndpoint != "" {
 			userDataValues["controlPlaneEndpoint"] = req.ControlPlaneEndpoint
 		}

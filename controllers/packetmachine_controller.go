@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -41,6 +42,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	logg "log"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-packet/api/v1beta1"
 	packet "sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet"
@@ -282,11 +285,11 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 
 	deviceID := machineScope.GetDeviceID()
 	var (
-		dev                  *metal.Device
-		addrs                []corev1.NodeAddress
-		err                  error
-		controlPlaneEndpoint *metal.IPReservation
-		resp                 *http.Response
+		dev   *metal.Device
+		addrs []corev1.NodeAddress
+		err   error
+		// controlPlaneEndpoint *metal.IPReservation
+		resp *http.Response
 	)
 
 	if deviceID != "" {
@@ -347,23 +350,29 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 
 		// when a node is a control plane node we need the elastic IP
 		// to template out the kube-vip deployment
-		if machineScope.IsControlPlane() {
-			controlPlaneEndpoint, _ = r.PacketClient.GetIPByClusterIdentifier(
-				ctx,
-				machineScope.Cluster.Namespace,
-				machineScope.Cluster.Name,
-				machineScope.PacketCluster.Spec.ProjectID)
-			if machineScope.PacketCluster.Spec.VIPManager == "CPEM" {
-				if len(controlPlaneEndpoint.Assignments) == 0 {
-					a := corev1.NodeAddress{
-						Type:    corev1.NodeExternalIP,
-						Address: controlPlaneEndpoint.GetAddress(),
-					}
-					addrs = append(addrs, a)
-				}
-			}
-			createDeviceReq.ControlPlaneEndpoint = controlPlaneEndpoint.GetAddress()
-		}
+		// if machineScope.IsControlPlane() {
+		// 	//testtesttest
+		// 	//controlplane이면 controlplaneendpoint를 packetclient.status.availableserverips[0]으로 하게 하고, 만약에 없으면, controlplane이 먼저 생성되게 해야 함.
+		// 	//client.go를 보면 req.ControlPlaneEndpoint를 빈 채로 보내도 괜찮음. 아래 코드 주석처리
+
+		// 	// controlPlaneEndpoint, _ = r.PacketClient.GetIPByClusterIdentifier(
+		// 	// 	ctx,
+		// 	// 	machineScope.Cluster.Namespace,
+		// 	// 	machineScope.Cluster.Name,
+		// 	// 	machineScope.PacketCluster.Spec.ProjectID)
+		// 	// if machineScope.PacketCluster.Spec.VIPManager == "CPEM" {
+		// 	// 	if len(controlPlaneEndpoint.Assignments) == 0 {
+		// 	// 		a := corev1.NodeAddress{
+		// 	// 			Type:    corev1.NodeExternalIP,
+		// 	// 			Address: controlPlaneEndpoint.GetAddress(),
+		// 	// 		}
+		// 	// 		addrs = append(addrs, a)
+		// 	// 	}
+		// 	// }
+		// 	// createDeviceReq.ControlPlaneEndpoint = controlPlaneEndpoint.GetAddress()
+		// 	//testtesttest
+
+		// }
 
 		dev, err = r.PacketClient.NewDevice(ctx, createDeviceReq)
 
@@ -400,6 +409,17 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 	}
 
 	deviceAddr := r.PacketClient.GetDeviceAddresses(dev)
+	//testtesttest 생성되는 controlplane의 Ip를 packetcluster.spec.availableserverip에 넣는 작업
+	if machineScope.IsControlPlane() {
+		// var AvailableServerIPs []string
+		adrbyte, err := json.Marshal(deviceAddr)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("address marshal error occured: %w", err)
+		}
+
+		logg.Printf("TESTTESTTESTconfirm the ip %v", string(adrbyte))
+	}
+
 	machineScope.SetAddresses(append(addrs, deviceAddr...))
 
 	// Proceed to reconcile the PacketMachine state.
@@ -413,22 +433,23 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 	case infrav1.PacketResourceStatusRunning:
 		log.Info("Machine instance is active", "instance-id", machineScope.ProviderID())
 
-		if machineScope.PacketCluster.Spec.VIPManager == "CPEM" {
-			controlPlaneEndpoint, _ = r.PacketClient.GetIPByClusterIdentifier(
-				ctx,
-				machineScope.Cluster.Namespace,
-				machineScope.Cluster.Name,
-				machineScope.PacketCluster.Spec.ProjectID)
-			if len(controlPlaneEndpoint.Assignments) == 0 && machineScope.IsControlPlane() {
-				apiRequest := r.PacketClient.DevicesApi.CreateIPAssignment(ctx, *dev.Id).IPAssignmentInput(metal.IPAssignmentInput{
-					Address: controlPlaneEndpoint.GetAddress(),
-				})
-				if _, _, err := apiRequest.Execute(); err != nil { //nolint:bodyclose // see https://github.com/timakin/bodyclose/issues/42
-					log.Error(err, "err assigining elastic ip to control plane. retrying...")
-					return ctrl.Result{RequeueAfter: time.Second * 20}, nil
-				}
-			}
-		}
+		//testtesttest EIP가 생성되고 태그로 EIP를 구분짓고, 없으면 다시 생성하는 과정이어서 빼도 됌.
+		// if machineScope.PacketCluster.Spec.VIPManager == "CPEM" {
+		// 	controlPlaneEndpoint, _ = r.PacketClient.GetIPByClusterIdentifier(
+		// 		ctx,
+		// 		machineScope.Cluster.Namespace,
+		// 		machineScope.Cluster.Name,
+		// 		machineScope.PacketCluster.Spec.ProjectID)
+		// 	if len(controlPlaneEndpoint.Assignments) == 0 && machineScope.IsControlPlane() {
+		// 		apiRequest := r.PacketClient.DevicesApi.CreateIPAssignment(ctx, *dev.Id).IPAssignmentInput(metal.IPAssignmentInput{
+		// 			Address: controlPlaneEndpoint.GetAddress(),
+		// 		})
+		// 		if _, _, err := apiRequest.Execute(); err != nil { //nolint:bodyclose // see https://github.com/timakin/bodyclose/issues/42
+		// 			log.Error(err, "err assigining elastic ip to control plane. retrying...")
+		// 			return ctrl.Result{RequeueAfter: time.Second * 20}, nil
+		// 		}
+		// 	}
+		// }
 
 		machineScope.SetReady()
 		conditions.MarkTrue(machineScope.PacketMachine, infrav1.DeviceReadyCondition)
