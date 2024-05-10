@@ -48,7 +48,7 @@ import (
 	"sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet/scope"
 	clog "sigs.k8s.io/cluster-api/util/log"
 
-	logg "log"
+	"slices"
 )
 
 const (
@@ -68,6 +68,11 @@ type PacketMachineReconciler struct {
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
+}
+
+type IPAddress struct {
+	Type    string `json:"type"`
+	Address string `json:"address"`
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=packetmachines,verbs=get;list;watch;create;update;patch;delete
@@ -171,7 +176,7 @@ func (r *PacketMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		err = r.reconcileDelete(ctx, machineScope)
 		return ctrl.Result{}, err
 	}
-	return r.reconcile(ctx, machineScope)
+	return r.reconcile(ctx, machineScope, packetcluster)
 }
 
 func (r *PacketMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -253,7 +258,7 @@ func (r *PacketMachineReconciler) PacketClusterToPacketMachines(ctx context.Cont
 	return result
 }
 
-func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *scope.MachineScope) (ctrl.Result, error) { //nolint:gocyclo,maintidx
+func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *scope.MachineScope, packetcluster *infrav1.PacketCluster) (ctrl.Result, error) { //nolint:gocyclo,maintidx
 	log := ctrl.LoggerFrom(ctx, "machine", machineScope.Machine.Name, "cluster", machineScope.Cluster.Name)
 	log.Info("Reconciling PacketMachine")
 
@@ -403,15 +408,38 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 	}
 
 	deviceAddr := r.PacketClient.GetDeviceAddresses(dev)
-	//testtesttest
+	// testtesttest
 	if machineScope.IsControlPlane() {
-		// var AvailableServerIPs []string
+		var IpAddresses []IPAddress
+		var availableServerIP string
+
 		adrbyte, err := json.Marshal(deviceAddr)
+		fmt.Printf("ADDR BYTE %v", string(adrbyte))
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("address marshal error occured: %w", err)
 		}
+		if len(adrbyte) != 0 {
+			if err := json.Unmarshal(adrbyte, &IpAddresses); err != nil {
+				return ctrl.Result{}, fmt.Errorf("address unmarshal error occured: %w", err)
+			}
 
-		logg.Printf("TESTTESTTESTconfirm the ip %v", string(adrbyte))
+			for _, ip := range IpAddresses {
+				if ip.Type == "InternalIP" {
+					fmt.Printf("loook at the IP %v, %T", ip.Address, ip.Address)
+					availableServerIP = ip.Address
+					if !slices.Contains(packetcluster.Status.AvailableServerIPs, availableServerIP) {
+						packetcluster.Status.AvailableServerIPs = append(packetcluster.Status.AvailableServerIPs, availableServerIP)
+					}
+				}
+			}
+
+		}
+	}
+	fmt.Printf("TESTTESTTEST %v", packetcluster.Status.AvailableServerIPs)
+
+	if err := r.Client.Status().Update(ctx, packetcluster); err != nil {
+		fmt.Printf("Error Occured when update AvailableServerIp of packetCluster %v", err)
+		return ctrl.Result{}, err
 	}
 
 	machineScope.SetAddresses(append(addrs, deviceAddr...))

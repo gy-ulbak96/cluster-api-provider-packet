@@ -1,6 +1,6 @@
 module sigs.k8s.io/cluster-api-provider-packet
 
-go 1.20
+go 1.21
 
 require (
 	github.com/equinix/equinix-sdk-go v0.35.1
