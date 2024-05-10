@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -46,6 +47,8 @@ import (
 	packet "sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet"
 	"sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet/scope"
 	clog "sigs.k8s.io/cluster-api/util/log"
+
+	logg "log"
 )
 
 const (
@@ -400,6 +403,17 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 	}
 
 	deviceAddr := r.PacketClient.GetDeviceAddresses(dev)
+	//testtesttest
+	if machineScope.IsControlPlane() {
+		// var AvailableServerIPs []string
+		adrbyte, err := json.Marshal(deviceAddr)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("address marshal error occured: %w", err)
+		}
+
+		logg.Printf("TESTTESTTESTconfirm the ip %v", string(adrbyte))
+	}
+
 	machineScope.SetAddresses(append(addrs, deviceAddr...))
 
 	// Proceed to reconcile the PacketMachine state.

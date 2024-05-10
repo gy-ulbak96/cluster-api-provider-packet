@@ -87,6 +87,12 @@ spec:
           status:
             description: PacketClusterStatus defines the observed state of PacketCluster.
             properties:
+              availableServerIPs:
+                description: AvailableServerIPs is a list of the Control Plane IP
+                  adds that can be used to register further nodes.
+                items:
+                  type: string
+                type: array
               conditions:
                 description: Conditions defines current service state of the PacketCluster.
                 items:
