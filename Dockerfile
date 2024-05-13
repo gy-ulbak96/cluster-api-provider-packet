@@ -22,6 +22,17 @@ WORKDIR /workspace
 
 # Run this with docker build --build_arg $(go env GOPROXY) to override the goproxy
 ARG goproxy=https://proxy.golang.org
+
+RUN apt-get update && apt-get install -y ca-certificates openssl
+ARG cert_location=/usr/local/share/ca-certificates
+RUN openssl s_client -showcerts -connect storage.googleapis.com:443 </dev/null 2>/dev/null|openssl x509 -outform PEM >  ${cert_location}/storage.googleapis.crt
+# Get certificate from "github.com"
+RUN openssl s_client -showcerts -connect github.com:443 </dev/null 2>/dev/null|openssl x509 -outform PEM > ${cert_location}/github.crt
+# Get certificate from "proxy.golang.org"
+RUN openssl s_client -showcerts -connect proxy.golang.org:443 </dev/null 2>/dev/null|openssl x509 -outform PEM >  ${cert_location}/proxy.golang.crt
+# Update certificates
+RUN update-ca-certificates
+
 ENV GOPROXY=$goproxy
 
 # Copy the Go Modules manifests

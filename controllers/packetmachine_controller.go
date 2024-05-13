@@ -48,6 +48,7 @@ import (
 	"sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet/scope"
 	clog "sigs.k8s.io/cluster-api/util/log"
 
+	"os"
 	"slices"
 )
 
@@ -411,7 +412,7 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 	// testtesttest
 	if machineScope.IsControlPlane() {
 		var IpAddresses []IPAddress
-		var availableServerIP string
+		// var availableServerIP string
 
 		adrbyte, err := json.Marshal(deviceAddr)
 		fmt.Printf("ADDR BYTE %v", string(adrbyte))
@@ -423,19 +424,36 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 				return ctrl.Result{}, fmt.Errorf("address unmarshal error occured: %w", err)
 			}
 
+			//외부 IP일 경우에만 사용
+			availableServerIPs := make([]string, 0)
+
+			//외부 IP일 경우에만 사용
 			for _, ip := range IpAddresses {
-				if ip.Type == "InternalIP" {
-					fmt.Printf("loook at the IP %v, %T", ip.Address, ip.Address)
-					availableServerIP = ip.Address
-					if !slices.Contains(packetcluster.Status.AvailableServerIPs, availableServerIP) {
-						packetcluster.Status.AvailableServerIPs = append(packetcluster.Status.AvailableServerIPs, availableServerIP)
+				// 실제로는 이렇게 내부 IP를 바라보게 하는 코드가 맞음.
+				// if ip.Type == "InternalIP" {
+				// 	fmt.Printf("loook at the IP %v, %T", ip.Address, ip.Address)
+				// 	availableServerIP = ip.Address
+				// 	if !slices.Contains(packetcluster.Status.AvailableServerIPs, availableServerIP) {
+				// 		packetcluster.Status.AvailableServerIPs = append(packetcluster.Status.AvailableServerIPs, availableServerIP)
+				// 	}
+				// }
+
+				// 테스트를 위해서 외부 IP를 가져오는 것으로 테스트
+				if ip.Type == "ExternalIP" {
+					fmt.Printf("loook at the IP %v, %T\n", ip.Address, ip.Address)
+					availableServerIPs = append(availableServerIPs, ip.Address)
+					fmt.Fprintf(os.Stdout, `available server ip list %v
+`, []any{availableServerIPs}...)
+					fmt.Printf("WHY?????? %v, %v, %T\n", packetcluster.Status.AvailableServerIPs, availableServerIPs[0], availableServerIPs[0])
+					if !slices.Contains(packetcluster.Status.AvailableServerIPs, availableServerIPs[0]) {
+						fmt.Printf("FLAG1")
+						packetcluster.Status.AvailableServerIPs = append(packetcluster.Status.AvailableServerIPs, availableServerIPs[0])
 					}
 				}
 			}
-
 		}
 	}
-	fmt.Printf("TESTTESTTEST %v", packetcluster.Status.AvailableServerIPs)
+	fmt.Printf("TESTTESTTEST %v\n", packetcluster.Status.AvailableServerIPs)
 
 	if err := r.Client.Status().Update(ctx, packetcluster); err != nil {
 		fmt.Printf("Error Occured when update AvailableServerIp of packetCluster %v", err)
