@@ -20,6 +20,7 @@ package controllers
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -147,8 +148,10 @@ func (r *PacketClusterReconciler) reconcileNormal(ctx context.Context, clusterSc
 				log.Error(err, "error reserving an ip")
 				return err
 			}
+			fmt.Printf("%v,%v", ipReserv, ip)
 			clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
-				Host: ip.To4().String(),
+				// Host: ip.To4().String(),
+				Host: "127.0.0.1",
 				Port: 6443,
 			}
 		case err != nil:
@@ -157,7 +160,8 @@ func (r *PacketClusterReconciler) reconcileNormal(ctx context.Context, clusterSc
 		default:
 			// If there is an ElasticIP with the right tag just use it again
 			clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
-				Host: ipReserv.GetAddress(),
+				// Host: ipReserv.GetAddress(),
+				Host: "127.0.0.1",
 				Port: 6443,
 			}
 		}
