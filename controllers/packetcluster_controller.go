@@ -114,38 +114,52 @@ func (r *PacketClusterReconciler) reconcileNormal(ctx context.Context, clusterSc
 
 	packetCluster := clusterScope.PacketCluster
 
-	ipReserv, err := r.PacketClient.GetIPByClusterIdentifier(ctx, clusterScope.Namespace(), clusterScope.Name(), packetCluster.Spec.ProjectID)
-	switch {
-	case errors.Is(err, packet.ErrControlPlanEndpointNotFound):
-		// Parse metro and facility from the cluster spec
-		var metro, facility string
+	// if len(packetCluster.Status.AvailableServerIPs) != 0 {
+	// 	clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
+	// 		Host: packetCluster.Status.AvailableServerIPs[0],
+	// 		Port: 6443,
+	// 	}
+	// }
 
-		facility = packetCluster.Spec.Facility
-		metro = packetCluster.Spec.Metro
-
-		// If both specified, metro takes precedence over facility
-		if metro != "" {
-			facility = ""
+	if len(packetCluster.Status.AvailableServerIPs) != 0 {
+		clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
+			Host: packetCluster.Status.AvailableServerIPs[0],
+			Port: 6443,
 		}
+	} else {
+		ipReserv, err := r.PacketClient.GetIPByClusterIdentifier(ctx, clusterScope.Namespace(), clusterScope.Name(), packetCluster.Spec.ProjectID)
+		switch {
+		case errors.Is(err, packet.ErrControlPlanEndpointNotFound):
+			// Parse metro and facility from the cluster spec
+			var metro, facility string
 
-		// There is not an ElasticIP with the right tags, at this point we can create one
-		ip, err := r.PacketClient.CreateIP(ctx, clusterScope.Namespace(), clusterScope.Name(), packetCluster.Spec.ProjectID, facility, metro)
-		if err != nil {
-			log.Error(err, "error reserving an ip")
+			facility = packetCluster.Spec.Facility
+			metro = packetCluster.Spec.Metro
+
+			// If both specified, metro takes precedence over facility
+			if metro != "" {
+				facility = ""
+			}
+
+			// There is not an ElasticIP with the right tags, at this point we can create one
+			ip, err := r.PacketClient.CreateIP(ctx, clusterScope.Namespace(), clusterScope.Name(), packetCluster.Spec.ProjectID, facility, metro)
+			if err != nil {
+				log.Error(err, "error reserving an ip")
+				return err
+			}
+			clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
+				Host: ip.To4().String(),
+				Port: 6443,
+			}
+		case err != nil:
+			log.Error(err, "error getting cluster IP")
 			return err
-		}
-		clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
-			Host: ip.To4().String(),
-			Port: 6443,
-		}
-	case err != nil:
-		log.Error(err, "error getting cluster IP")
-		return err
-	default:
-		// If there is an ElasticIP with the right tag just use it again
-		clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
-			Host: ipReserv.GetAddress(),
-			Port: 6443,
+		default:
+			// If there is an ElasticIP with the right tag just use it again
+			clusterScope.PacketCluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
+				Host: ipReserv.GetAddress(),
+				Port: 6443,
+			}
 		}
 	}
 

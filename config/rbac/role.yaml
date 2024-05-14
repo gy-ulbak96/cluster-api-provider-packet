@@ -37,18 +37,22 @@ rules:
   - cluster.x-k8s.io
   resources:
   - clusters
+  - clusters/spec
   - clusters/status
+  - machines
+  - machines/status
+  - machinesets
   verbs:
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - cluster.x-k8s.io
   resources:
   - clusters
-  - machines
-  - machines/status
-  - machinesets
+  - clusters/status
   verbs:
   - get
   - list

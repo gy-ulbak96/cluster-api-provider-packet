@@ -48,7 +48,6 @@ import (
 	"sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet/scope"
 	clog "sigs.k8s.io/cluster-api/util/log"
 
-	"os"
 	"slices"
 )
 
@@ -78,7 +77,7 @@ type IPAddress struct {
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=packetmachines,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=packetmachines/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;machinesets;machines;machines/status,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/spec;clusters/status;machinesets;machines;machines/status,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=bootstrap.cluster.x-k8s.io,resources=kubeadmconfigs;kubeadmconfigs/status,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets;,verbs=get;list;watch
 
@@ -177,7 +176,7 @@ func (r *PacketMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		err = r.reconcileDelete(ctx, machineScope)
 		return ctrl.Result{}, err
 	}
-	return r.reconcile(ctx, machineScope, packetcluster)
+	return r.reconcile(ctx, machineScope, packetcluster, cluster)
 }
 
 func (r *PacketMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -259,7 +258,7 @@ func (r *PacketMachineReconciler) PacketClusterToPacketMachines(ctx context.Cont
 	return result
 }
 
-func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *scope.MachineScope, packetcluster *infrav1.PacketCluster) (ctrl.Result, error) { //nolint:gocyclo,maintidx
+func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *scope.MachineScope, packetcluster *infrav1.PacketCluster, cluster *clusterv1.Cluster) (ctrl.Result, error) { //nolint:gocyclo,maintidx
 	log := ctrl.LoggerFrom(ctx, "machine", machineScope.Machine.Name, "cluster", machineScope.Cluster.Name)
 	log.Info("Reconciling PacketMachine")
 
@@ -414,6 +413,20 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 		var IpAddresses []IPAddress
 		// var availableServerIP string
 
+		//testtesttest - join되는 애들 packetcluster의 apiendpoint를 바꾸려고 함. - 이건 되는데, 문제는 처음 생성.
+		// if len(packetcluster.Status.AvailableServerIPs) != 0 {
+		// 	packetcluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
+		// 		Host: packetcluster.Status.AvailableServerIPs[0],
+		// 		Port: 6443,
+		// 	}
+		// 	if err := r.Client.Update(ctx, packetcluster); err != nil {
+		// 		fmt.Printf("Error Occured when update spec of PacketCluster  %v", err)
+		// 		return ctrl.Result{}, err
+		// 	}
+		// }
+
+		//testtesttest
+
 		adrbyte, err := json.Marshal(deviceAddr)
 		fmt.Printf("ADDR BYTE %v", string(adrbyte))
 		if err != nil {
@@ -440,13 +453,11 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 
 				// 테스트를 위해서 외부 IP를 가져오는 것으로 테스트
 				if ip.Type == "ExternalIP" {
-					fmt.Printf("loook at the IP %v, %T\n", ip.Address, ip.Address)
+					// fmt.Printf("loook at the IP %v, %T\n", ip.Address, ip.Address)
 					availableServerIPs = append(availableServerIPs, ip.Address)
-					fmt.Fprintf(os.Stdout, `available server ip list %v
-`, []any{availableServerIPs}...)
-					fmt.Printf("WHY?????? %v, %v, %T\n", packetcluster.Status.AvailableServerIPs, availableServerIPs[0], availableServerIPs[0])
+					// 	fmt.Fprintf(os.Stdout, `available server ip list %v
+					// `, []any{availableServerIPs}...)
 					if !slices.Contains(packetcluster.Status.AvailableServerIPs, availableServerIPs[0]) {
-						fmt.Printf("FLAG1")
 						packetcluster.Status.AvailableServerIPs = append(packetcluster.Status.AvailableServerIPs, availableServerIPs[0])
 					}
 				}
@@ -457,6 +468,25 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 
 	if err := r.Client.Status().Update(ctx, packetcluster); err != nil {
 		fmt.Printf("Error Occured when update AvailableServerIp of packetCluster %v", err)
+		return ctrl.Result{}, err
+	}
+
+	if len(packetcluster.Status.AvailableServerIPs) != 0 {
+		fmt.Printf("SSSSHHHOWWWWW %v", packetcluster.Status.AvailableServerIPs[0])
+		// packetcluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
+		// 	Host: packetcluster.Status.AvailableServerIPs[0],
+		// 	Port: 6443,
+		// }
+		cluster.Spec.ControlPlaneEndpoint.Host = packetcluster.Status.AvailableServerIPs[0]
+	}
+
+	if err := r.Client.Update(ctx, packetcluster); err != nil {
+		fmt.Printf("Error Occured when update Spec Controlplane of packetCluster %v", err)
+		return ctrl.Result{}, err
+	}
+
+	if err := r.Client.Update(ctx, cluster); err != nil {
+		fmt.Printf("Error Occured when update Spec Controlplane of packetCluster %v", err)
 		return ctrl.Result{}, err
 	}
 

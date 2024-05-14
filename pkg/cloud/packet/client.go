@@ -141,9 +141,10 @@ func (p *Client) NewDevice(ctx context.Context, req CreateDeviceRequest) (*metal
 		// control plane machines should get the API key injected
 		userDataValues["apiKey"] = p.APIClient.GetConfig().DefaultHeader["X-Auth-Token"]
 
-		if req.ControlPlaneEndpoint != "" {
-			userDataValues["controlPlaneEndpoint"] = req.ControlPlaneEndpoint
-		}
+		userDataValues["controlPlaneEndpoint"] = ""
+		// if req.ControlPlaneEndpoint != "" {
+		// 	userDataValues["controlPlaneEndpoint"] = req.ControlPlaneEndpoint
+		// }
 
 		tags = append(tags, infrav1.ControlPlaneTag)
 	} else {
