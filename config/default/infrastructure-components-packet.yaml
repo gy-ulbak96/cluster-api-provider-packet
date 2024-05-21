@@ -576,9 +576,13 @@ rules:
   - ""
   resources:
   - secrets
+  - secrets/spec
+  - secrets/status
   verbs:
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - authentication.k8s.io
@@ -610,6 +614,9 @@ rules:
   - machines
   - machines/status
   - machinesets
+  - secret
+  - secret/spec
+  - secret/status
   verbs:
   - get
   - list

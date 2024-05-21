@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,9 +78,9 @@ type IPAddress struct {
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=packetmachines,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=packetmachines/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/spec;clusters/status;machinesets;machines;machines/status,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/spec;clusters/status;machinesets;machines;machines/status;secret;secret/spec;secret/status,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=bootstrap.cluster.x-k8s.io,resources=kubeadmconfigs;kubeadmconfigs/status,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets;,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets;secrets/spec;secrets/status;,verbs=get;list;watch;update;patch
 
 func (r *PacketMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, rerr error) {
 	log := ctrl.LoggerFrom(ctx)
@@ -464,20 +465,95 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 			}
 		}
 	}
-	fmt.Printf("TESTTESTTEST %v\n", packetcluster.Status.AvailableServerIPs)
-
 	if err := r.Client.Status().Update(ctx, packetcluster); err != nil {
 		fmt.Printf("Error Occured when update AvailableServerIp of packetCluster %v", err)
 		return ctrl.Result{}, err
 	}
 
 	if len(packetcluster.Status.AvailableServerIPs) != 0 {
-		fmt.Printf("SSSSHHHOWWWWW %v", packetcluster.Status.AvailableServerIPs[0])
 		// packetcluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
 		// 	Host: packetcluster.Status.AvailableServerIPs[0],
 		// 	Port: 6443,
 		// }
 		cluster.Spec.ControlPlaneEndpoint.Host = packetcluster.Status.AvailableServerIPs[0]
+
+		//testtesttest
+		// get secret and change the server
+		clusterSecret := &corev1.Secret{}
+		clusterSecretNamespacedName := client.ObjectKey{
+			Namespace: packetmachine.Namespace,
+			Name:      cluster.Spec.InfrastructureRef.Name + "-kubeconfig",
+		}
+		if err := r.Client.Get(ctx, clusterSecretNamespacedName, clusterSecret); err != nil {
+			log.Info("clusterSecret is not available yet")
+			return ctrl.Result{}, nil
+		}
+		clusterSecretByte, err := json.Marshal(clusterSecret.Data)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("address marshal error occured: %w", err)
+		}
+
+		var jsonData map[string]string
+		err = json.Unmarshal(clusterSecretByte, &jsonData)
+		if err != nil {
+			fmt.Printf("Error parsing JSON: %v\n", err)
+			return ctrl.Result{}, fmt.Errorf("Error parsing JSON error occured: %w", err)
+		}
+
+		value := jsonData["value"]
+		decodedValue, _ := base64.StdEncoding.DecodeString(string(value))
+		decodedString := string(decodedValue)
+
+		lines := strings.Split(decodedString, "\n")
+
+		// Find the index of the line containing the server field
+		serverLineIndex := -1
+		for i, line := range lines {
+			if strings.HasPrefix(line, "    server:") {
+				serverLineIndex = i
+				break
+			}
+		}
+
+		// Check if the server line was found
+		if serverLineIndex == -1 {
+			fmt.Println("Server line not found.")
+			return ctrl.Result{}, fmt.Errorf("Error Server line not found error occured: %w", err)
+		}
+
+		newstring := `https://` + string(packetcluster.Status.AvailableServerIPs[0]) + `:6443`
+
+		lines[serverLineIndex] = strings.Replace(lines[serverLineIndex], "https://127.0.0.1:6443", newstring, 1)
+
+		// Reconstruct the JSON string
+		modifiedJson := strings.Join(lines, "\n")
+
+		jsonDataBytes := []byte(modifiedJson)
+
+		// Encode the byte slice to a Base64 string
+		encodedJson := base64.StdEncoding.EncodeToString(jsonDataBytes)
+
+		fmt.Printf("Encoded JSON: %s\n", encodedJson)
+
+		resultMap := map[string][]byte{
+			"value": jsonDataBytes,
+		}
+
+		// finalJson, err := json.Marshal(resultMap)
+		// if err!= nil {
+		//     fmt.Println("Error creating final JSON:", err)
+		//     return ctrl.Result{}, fmt.Errorf("Error creating final JSON error occured: %w", err)
+		// }
+
+		clusterSecret.Data = resultMap
+
+		if err := r.Client.Update(ctx, clusterSecret); err != nil {
+			fmt.Printf("Error Occured when update clusterSecret %v\n", err)
+			return ctrl.Result{}, err
+		}
+
+		//testtesttest
+
 	}
 
 	if err := r.Client.Update(ctx, packetcluster); err != nil {
