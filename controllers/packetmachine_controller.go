@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,8 +49,6 @@ import (
 	packet "sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet"
 	"sigs.k8s.io/cluster-api-provider-packet/pkg/cloud/packet/scope"
 	clog "sigs.k8s.io/cluster-api/util/log"
-
-	"slices"
 )
 
 const (
@@ -174,10 +173,99 @@ func (r *PacketMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Handle deleted machines
 	if !packetmachine.ObjectMeta.DeletionTimestamp.IsZero() {
-		err = r.reconcileDelete(ctx, machineScope)
+		err = r.reconcileDelete(ctx, machineScope, packetcluster, cluster)
 		return ctrl.Result{}, err
 	}
 	return r.reconcile(ctx, machineScope, packetcluster, cluster)
+}
+
+func (r *PacketMachineReconciler) reconcileSecret(ctx context.Context, packetmachine *infrav1.PacketMachine, packetcluster *infrav1.PacketCluster, cluster *clusterv1.Cluster, deleteflag int) error {
+	log := ctrl.LoggerFrom(ctx)
+	var oldstring string
+	var newstring string
+
+	clusterSecret := &corev1.Secret{}
+	clusterSecretNamespacedName := client.ObjectKey{
+		Namespace: packetmachine.Namespace,
+		Name:      cluster.Spec.InfrastructureRef.Name + "-kubeconfig",
+	}
+	if err := r.Client.Get(ctx, clusterSecretNamespacedName, clusterSecret); err != nil {
+		log.Info("clusterSecret is not available yet")
+		return err
+	}
+	clusterSecretByte, err := json.Marshal(clusterSecret.Data)
+	if err != nil {
+		return fmt.Errorf("address marshal error occured: %w", err)
+	}
+
+	var jsonData map[string]string
+	err = json.Unmarshal(clusterSecretByte, &jsonData)
+	if err != nil {
+		fmt.Printf("Error parsing JSON: %v\n", err)
+		return fmt.Errorf("Error parsing JSON error occured: %w", err)
+	}
+
+	value := jsonData["value"]
+	decodedValue, _ := base64.StdEncoding.DecodeString(string(value))
+	decodedString := string(decodedValue)
+
+	lines := strings.Split(decodedString, "\n")
+
+	// Find the index of the line containing the server field
+	serverLineIndex := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "    server:") {
+			serverLineIndex = i
+			break
+		}
+	}
+
+	// Check if the server line was found
+	if serverLineIndex == -1 {
+		fmt.Println("Server line not found.")
+		return fmt.Errorf("Error Server line not found error occured: %w", err)
+	}
+
+	//여러개 삭제되었을때는?? 로직...
+	//컨트롤플레인이 하나일때도 좀...
+	if deleteflag == 0 {
+		oldstring = "https://127.0.0.1:6443"
+		newstring = `https://` + string(packetcluster.Status.AvailableServerIPs[0]) + `:6443`
+	} else {
+		oldstring = `https://` + string(packetcluster.Status.AvailableServerIPs[0]) + `:6443`
+		newstring = `https://` + string(packetcluster.Status.AvailableServerIPs[1]) + `:6443`
+	}
+
+	lines[serverLineIndex] = strings.Replace(lines[serverLineIndex], oldstring, newstring, 1)
+
+	// Reconstruct the JSON string
+	modifiedJson := strings.Join(lines, "\n")
+
+	jsonDataBytes := []byte(modifiedJson)
+
+	// Encode the byte slice to a Base64 string
+	encodedJson := base64.StdEncoding.EncodeToString(jsonDataBytes)
+
+	fmt.Printf("Encoded JSON: %s\n", encodedJson)
+
+	resultMap := map[string][]byte{
+		"value": jsonDataBytes,
+	}
+
+	// finalJson, err := json.Marshal(resultMap)
+	// if err!= nil {
+	//     fmt.Println("Error creating final JSON:", err)
+	//     return ctrl.Result{}, fmt.Errorf("Error creating final JSON error occured: %w", err)
+	// }
+
+	clusterSecret.Data = resultMap
+
+	if err := r.Client.Update(ctx, clusterSecret); err != nil {
+		fmt.Printf("Error Occured when update clusterSecret %v\n", err)
+		return err
+	}
+
+	return nil
 }
 
 func (r *PacketMachineReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -471,86 +559,89 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 	}
 
 	if len(packetcluster.Status.AvailableServerIPs) != 0 {
-		// packetcluster.Spec.ControlPlaneEndpoint = clusterv1.APIEndpoint{
-		// 	Host: packetcluster.Status.AvailableServerIPs[0],
-		// 	Port: 6443,
-		// }
 		cluster.Spec.ControlPlaneEndpoint.Host = packetcluster.Status.AvailableServerIPs[0]
 
 		//testtesttest
-		// get secret and change the server
-		clusterSecret := &corev1.Secret{}
-		clusterSecretNamespacedName := client.ObjectKey{
-			Namespace: packetmachine.Namespace,
-			Name:      cluster.Spec.InfrastructureRef.Name + "-kubeconfig",
-		}
-		if err := r.Client.Get(ctx, clusterSecretNamespacedName, clusterSecret); err != nil {
-			log.Info("clusterSecret is not available yet")
-			return ctrl.Result{}, nil
-		}
-		clusterSecretByte, err := json.Marshal(clusterSecret.Data)
+		//make change secret function
+		deleteflag := 0
+		err := r.reconcileSecret(ctx, packetmachine, packetcluster, cluster, deleteflag)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("address marshal error occured: %w", err)
-		}
-
-		var jsonData map[string]string
-		err = json.Unmarshal(clusterSecretByte, &jsonData)
-		if err != nil {
-			fmt.Printf("Error parsing JSON: %v\n", err)
-			return ctrl.Result{}, fmt.Errorf("Error parsing JSON error occured: %w", err)
-		}
-
-		value := jsonData["value"]
-		decodedValue, _ := base64.StdEncoding.DecodeString(string(value))
-		decodedString := string(decodedValue)
-
-		lines := strings.Split(decodedString, "\n")
-
-		// Find the index of the line containing the server field
-		serverLineIndex := -1
-		for i, line := range lines {
-			if strings.HasPrefix(line, "    server:") {
-				serverLineIndex = i
-				break
-			}
-		}
-
-		// Check if the server line was found
-		if serverLineIndex == -1 {
-			fmt.Println("Server line not found.")
-			return ctrl.Result{}, fmt.Errorf("Error Server line not found error occured: %w", err)
-		}
-
-		newstring := `https://` + string(packetcluster.Status.AvailableServerIPs[0]) + `:6443`
-
-		lines[serverLineIndex] = strings.Replace(lines[serverLineIndex], "https://127.0.0.1:6443", newstring, 1)
-
-		// Reconstruct the JSON string
-		modifiedJson := strings.Join(lines, "\n")
-
-		jsonDataBytes := []byte(modifiedJson)
-
-		// Encode the byte slice to a Base64 string
-		encodedJson := base64.StdEncoding.EncodeToString(jsonDataBytes)
-
-		fmt.Printf("Encoded JSON: %s\n", encodedJson)
-
-		resultMap := map[string][]byte{
-			"value": jsonDataBytes,
-		}
-
-		// finalJson, err := json.Marshal(resultMap)
-		// if err!= nil {
-		//     fmt.Println("Error creating final JSON:", err)
-		//     return ctrl.Result{}, fmt.Errorf("Error creating final JSON error occured: %w", err)
-		// }
-
-		clusterSecret.Data = resultMap
-
-		if err := r.Client.Update(ctx, clusterSecret); err != nil {
-			fmt.Printf("Error Occured when update clusterSecret %v\n", err)
 			return ctrl.Result{}, err
 		}
+		// get secret and change the server
+
+		// clusterSecret := &corev1.Secret{}
+		// clusterSecretNamespacedName := client.ObjectKey{
+		// 	Namespace: packetmachine.Namespace,
+		// 	Name:      cluster.Spec.InfrastructureRef.Name + "-kubeconfig",
+		// }
+		// if err := r.Client.Get(ctx, clusterSecretNamespacedName, clusterSecret); err != nil {
+		// 	log.Info("clusterSecret is not available yet")
+		// 	return ctrl.Result{}, nil
+		// }
+		// clusterSecretByte, err := json.Marshal(clusterSecret.Data)
+		// if err != nil {
+		// 	return ctrl.Result{}, fmt.Errorf("address marshal error occured: %w", err)
+		// }
+
+		// var jsonData map[string]string
+		// err = json.Unmarshal(clusterSecretByte, &jsonData)
+		// if err != nil {
+		// 	fmt.Printf("Error parsing JSON: %v\n", err)
+		// 	return ctrl.Result{}, fmt.Errorf("Error parsing JSON error occured: %w", err)
+		// }
+
+		// value := jsonData["value"]
+		// decodedValue, _ := base64.StdEncoding.DecodeString(string(value))
+		// decodedString := string(decodedValue)
+
+		// lines := strings.Split(decodedString, "\n")
+
+		// // Find the index of the line containing the server field
+		// serverLineIndex := -1
+		// for i, line := range lines {
+		// 	if strings.HasPrefix(line, "    server:") {
+		// 		serverLineIndex = i
+		// 		break
+		// 	}
+		// }
+
+		// // Check if the server line was found
+		// if serverLineIndex == -1 {
+		// 	fmt.Println("Server line not found.")
+		// 	return ctrl.Result{}, fmt.Errorf("Error Server line not found error occured: %w", err)
+		// }
+
+		// newstring := `https://` + string(packetcluster.Status.AvailableServerIPs[0]) + `:6443`
+
+		// lines[serverLineIndex] = strings.Replace(lines[serverLineIndex], "https://127.0.0.1:6443", newstring, 1)
+
+		// // Reconstruct the JSON string
+		// modifiedJson := strings.Join(lines, "\n")
+
+		// jsonDataBytes := []byte(modifiedJson)
+
+		// // Encode the byte slice to a Base64 string
+		// encodedJson := base64.StdEncoding.EncodeToString(jsonDataBytes)
+
+		// fmt.Printf("Encoded JSON: %s\n", encodedJson)
+
+		// resultMap := map[string][]byte{
+		// 	"value": jsonDataBytes,
+		// }
+
+		// // finalJson, err := json.Marshal(resultMap)
+		// // if err!= nil {
+		// //     fmt.Println("Error creating final JSON:", err)
+		// //     return ctrl.Result{}, fmt.Errorf("Error creating final JSON error occured: %w", err)
+		// // }
+
+		// clusterSecret.Data = resultMap
+
+		// if err := r.Client.Update(ctx, clusterSecret); err != nil {
+		// 	fmt.Printf("Error Occured when update clusterSecret %v\n", err)
+		// 	return ctrl.Result{}, err
+		// }
 
 		//testtesttest
 
@@ -625,7 +716,7 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 	return result, nil
 }
 
-func (r *PacketMachineReconciler) reconcileDelete(ctx context.Context, machineScope *scope.MachineScope) error {
+func (r *PacketMachineReconciler) reconcileDelete(ctx context.Context, machineScope *scope.MachineScope, packetcluster *infrav1.PacketCluster, cluster *clusterv1.Cluster) error {
 	log := ctrl.LoggerFrom(ctx, "machine", machineScope.Machine.Name, "cluster", machineScope.Cluster.Name)
 	log.Info("Reconciling Delete PacketMachine")
 
@@ -685,6 +776,61 @@ func (r *PacketMachineReconciler) reconcileDelete(ctx context.Context, machineSc
 	if device == nil {
 		controllerutil.RemoveFinalizer(packetmachine, infrav1.MachineFinalizer)
 		return fmt.Errorf("%w: %s", errMissingDevice, packetmachine.Name)
+	}
+
+	//testtesttest
+	deviceAddr := r.PacketClient.GetDeviceAddresses(device)
+	if machineScope.IsControlPlane() {
+		//외부 IP일 경우
+		var IpAddresses []IPAddress
+		var availableServerIP string
+
+		adrbyte, err := json.Marshal(deviceAddr)
+		fmt.Printf("ADDR BYTE %v", string(adrbyte))
+		if err != nil {
+			return fmt.Errorf("address marshal error occured: %w", err)
+		}
+		if len(adrbyte) != 0 {
+			if err := json.Unmarshal(adrbyte, &IpAddresses); err != nil {
+				return fmt.Errorf("address unmarshal error occured: %w", err)
+			}
+			//외부 IP일 경우에만 사용
+			availableServerIPs := make([]string, 0)
+			for _, ip := range IpAddresses {
+				// 실제로는 이렇게 내부 IP를 바라보게 하는 코드가 맞음.
+				if ip.Type == "InternalIP" {
+					fmt.Printf("loook at the IP %v, %T", ip.Address, ip.Address)
+					availableServerIP = ip.Address
+					fmt.Printf("INTERNALIP %v", availableServerIP)
+				}
+
+				// 테스트를 위해서 외부 IP를 가져오는 것으로 테스트
+				if ip.Type == "ExternalIP" {
+					fmt.Printf("loook at the external IP %v, %T\n", ip.Address, ip.Address)
+					availableServerIPs = append(availableServerIPs, ip.Address)
+				}
+			}
+			if slices.Contains(packetcluster.Status.AvailableServerIPs, availableServerIPs[0]) {
+				index := slices.Index(packetcluster.Status.AvailableServerIPs, availableServerIPs[0])
+				packetcluster.Status.AvailableServerIPs = slices.Delete(packetcluster.Status.AvailableServerIPs, index, index+1)
+			}
+
+			//packetcluster, cluster, kubeconfig secret 변경
+			// if availableServerIPs[0] == packetcluster.Status.AvailableServerIPs[0] {
+			// 	clusterSecret := &corev1.Secret{}
+			// 	clusterSecretNamespacedName := client.ObjectKey{
+			// 		Namespace: packetmachine.Namespace,
+			// 		Name:      cluster.Spec.InfrastructureRef.Name + "-kubeconfig",
+			// 	}
+
+			// }
+
+		}
+	}
+
+	if err := r.Client.Status().Update(ctx, packetcluster); err != nil {
+		fmt.Printf("Error Occured when update AvailableServerIp of packetCluster %v", err)
+		return err
 	}
 
 	apiRequest := r.PacketClient.DevicesApi.DeleteDevice(ctx, device.GetId()).ForceDelete(force)
