@@ -234,6 +234,7 @@ func (r *PacketMachineReconciler) reconcileSecret(ctx context.Context, packetmac
 	} else {
 		oldstring = `https://` + string(packetcluster.Status.AvailableServerIPs[0]) + `:6443`
 		newstring = `https://` + string(packetcluster.Status.AvailableServerIPs[1]) + `:6443`
+		fmt.Printf("delete secret %v, %v \n", oldstring, newstring)
 	}
 
 	lines[serverLineIndex] = strings.Replace(lines[serverLineIndex], oldstring, newstring, 1)
@@ -251,12 +252,6 @@ func (r *PacketMachineReconciler) reconcileSecret(ctx context.Context, packetmac
 	resultMap := map[string][]byte{
 		"value": jsonDataBytes,
 	}
-
-	// finalJson, err := json.Marshal(resultMap)
-	// if err!= nil {
-	//     fmt.Println("Error creating final JSON:", err)
-	//     return ctrl.Result{}, fmt.Errorf("Error creating final JSON error occured: %w", err)
-	// }
 
 	clusterSecret.Data = resultMap
 
@@ -568,83 +563,6 @@ func (r *PacketMachineReconciler) reconcile(ctx context.Context, machineScope *s
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		// get secret and change the server
-
-		// clusterSecret := &corev1.Secret{}
-		// clusterSecretNamespacedName := client.ObjectKey{
-		// 	Namespace: packetmachine.Namespace,
-		// 	Name:      cluster.Spec.InfrastructureRef.Name + "-kubeconfig",
-		// }
-		// if err := r.Client.Get(ctx, clusterSecretNamespacedName, clusterSecret); err != nil {
-		// 	log.Info("clusterSecret is not available yet")
-		// 	return ctrl.Result{}, nil
-		// }
-		// clusterSecretByte, err := json.Marshal(clusterSecret.Data)
-		// if err != nil {
-		// 	return ctrl.Result{}, fmt.Errorf("address marshal error occured: %w", err)
-		// }
-
-		// var jsonData map[string]string
-		// err = json.Unmarshal(clusterSecretByte, &jsonData)
-		// if err != nil {
-		// 	fmt.Printf("Error parsing JSON: %v\n", err)
-		// 	return ctrl.Result{}, fmt.Errorf("Error parsing JSON error occured: %w", err)
-		// }
-
-		// value := jsonData["value"]
-		// decodedValue, _ := base64.StdEncoding.DecodeString(string(value))
-		// decodedString := string(decodedValue)
-
-		// lines := strings.Split(decodedString, "\n")
-
-		// // Find the index of the line containing the server field
-		// serverLineIndex := -1
-		// for i, line := range lines {
-		// 	if strings.HasPrefix(line, "    server:") {
-		// 		serverLineIndex = i
-		// 		break
-		// 	}
-		// }
-
-		// // Check if the server line was found
-		// if serverLineIndex == -1 {
-		// 	fmt.Println("Server line not found.")
-		// 	return ctrl.Result{}, fmt.Errorf("Error Server line not found error occured: %w", err)
-		// }
-
-		// newstring := `https://` + string(packetcluster.Status.AvailableServerIPs[0]) + `:6443`
-
-		// lines[serverLineIndex] = strings.Replace(lines[serverLineIndex], "https://127.0.0.1:6443", newstring, 1)
-
-		// // Reconstruct the JSON string
-		// modifiedJson := strings.Join(lines, "\n")
-
-		// jsonDataBytes := []byte(modifiedJson)
-
-		// // Encode the byte slice to a Base64 string
-		// encodedJson := base64.StdEncoding.EncodeToString(jsonDataBytes)
-
-		// fmt.Printf("Encoded JSON: %s\n", encodedJson)
-
-		// resultMap := map[string][]byte{
-		// 	"value": jsonDataBytes,
-		// }
-
-		// // finalJson, err := json.Marshal(resultMap)
-		// // if err!= nil {
-		// //     fmt.Println("Error creating final JSON:", err)
-		// //     return ctrl.Result{}, fmt.Errorf("Error creating final JSON error occured: %w", err)
-		// // }
-
-		// clusterSecret.Data = resultMap
-
-		// if err := r.Client.Update(ctx, clusterSecret); err != nil {
-		// 	fmt.Printf("Error Occured when update clusterSecret %v\n", err)
-		// 	return ctrl.Result{}, err
-		// }
-
-		//testtesttest
-
 	}
 
 	if err := r.Client.Update(ctx, packetcluster); err != nil {
@@ -810,26 +728,47 @@ func (r *PacketMachineReconciler) reconcileDelete(ctx context.Context, machineSc
 					availableServerIPs = append(availableServerIPs, ip.Address)
 				}
 			}
+
+			//packetcluster, cluster, kubeconfig secret 변경
+			//이것도 컨트롤플레인 한개일 경우랑 한번에 여러개 지워질 경우를 대비해야함. 지금은 약간 임시방편
+			//관련없지만 rancher에서 cattle-system 연동안되는것도 확인
+			if availableServerIPs[0] == packetcluster.Status.AvailableServerIPs[0] {
+				deleteflag := 1
+				err := r.reconcileSecret(ctx, packetmachine, packetcluster, cluster, deleteflag)
+				if err != nil {
+					return err
+				}
+				cluster.Spec.ControlPlaneEndpoint.Host = packetcluster.Status.AvailableServerIPs[1]
+			}
+
 			if slices.Contains(packetcluster.Status.AvailableServerIPs, availableServerIPs[0]) {
 				index := slices.Index(packetcluster.Status.AvailableServerIPs, availableServerIPs[0])
 				packetcluster.Status.AvailableServerIPs = slices.Delete(packetcluster.Status.AvailableServerIPs, index, index+1)
 			}
-
-			//packetcluster, cluster, kubeconfig secret 변경
-			// if availableServerIPs[0] == packetcluster.Status.AvailableServerIPs[0] {
-			// 	clusterSecret := &corev1.Secret{}
-			// 	clusterSecretNamespacedName := client.ObjectKey{
-			// 		Namespace: packetmachine.Namespace,
-			// 		Name:      cluster.Spec.InfrastructureRef.Name + "-kubeconfig",
-			// 	}
-
-			// }
-
 		}
+	}
+	if err := r.Client.Update(ctx, cluster); err != nil {
+		fmt.Printf("Error Occured when update Cluster %v", err)
+		return err
 	}
 
 	if err := r.Client.Status().Update(ctx, packetcluster); err != nil {
-		fmt.Printf("Error Occured when update AvailableServerIp of packetCluster %v", err)
+		fmt.Printf("Error Occured when update Cluster %v", err)
+		return err
+	}
+
+	packetcluster = &infrav1.PacketCluster{}
+	packetclusterNamespacedName := client.ObjectKey{
+		Namespace: packetmachine.Namespace,
+		Name:      cluster.Spec.InfrastructureRef.Name,
+	}
+	if err := r.Client.Get(ctx, packetclusterNamespacedName, packetcluster); err != nil {
+		log.Info("PacketCluster is not available yet")
+		return err
+	}
+
+	if err := r.Client.Update(ctx, packetcluster); err != nil {
+		fmt.Printf("Error Occured when after delete update AvailableServerIp of packetCluster %v", err)
 		return err
 	}
 
